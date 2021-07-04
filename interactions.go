@@ -86,7 +86,7 @@ func (a *App) requestHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) 
 	a.logger.WithField("addr", ctx.RemoteIP()).Debug("new request")
 	resp, err := a.ProcessRequest(ctx.Request.Body())
 	if err != nil {
-		a.logger.WithError(err).Error("failed to process request")
+		a.logger.WithError(err).Error("failed to process request: ", err)
 		_ = writeJSON(ctx, fasthttp.StatusOK, objects.InteractionResponse{
 			Type: objects.ResponseChannelMessageWithSource,
 			Data: &objects.InteractionApplicationCommandCallbackData{
@@ -111,6 +111,7 @@ func (a *App) ProcessRequest(data []byte) (resp *objects.InteractionResponse, er
 	err = json.Unmarshal(data, &req)
 	if err != nil {
 		a.logger.WithError(err).Error("failed to decode request body")
+		err = fmt.Errorf("failed to decode request body")
 		return
 	}
 
@@ -124,6 +125,15 @@ func (a *App) ProcessRequest(data []byte) (resp *objects.InteractionResponse, er
 		resp = a.commandHandler(&req)
 	case objects.InteractionButton:
 		resp = a.componentHandler(&req)
+		if resp == nil {
+			return &objects.InteractionResponse{
+				Type: objects.ResponseDeferredMessageUpdate,
+			}, nil
+		}
+	}
+
+	if resp == nil {
+		err = fmt.Errorf("nil response")
 	}
 
 	return
