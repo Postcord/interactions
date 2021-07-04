@@ -13,17 +13,21 @@ import (
 	"github.com/valyala/fasthttprouter"
 )
 
+type (
+	CommandHandlerFunc   func(*objects.Interaction) *objects.InteractionResponse
+	ComponentHandlerFunc func(*objects.Interaction) *objects.InteractionResponse
+)
+
 // App is the primary interactions server
 type App struct {
 	Router           *fasthttprouter.Router
 	server           *fasthttp.Server
-	commands         []*objects.ApplicationCommand
-	componentHandler ComponentHandlerFunc
 	extraProps       map[string]interface{}
 	propsLock        sync.RWMutex
 	logger           *logrus.Logger
 	restClient       *rest.Client
-	cmdRouter        *CommandRouter
+	commandHandler   CommandHandlerFunc
+	componentHandler ComponentHandlerFunc
 }
 
 // Create a new interactions server instance
@@ -35,7 +39,6 @@ func New(config *Config) (*App, error) {
 
 	router := fasthttprouter.New()
 	a := &App{
-		commands: make([]*objects.ApplicationCommand, 0),
 		server: &fasthttp.Server{
 			Handler: router.Handler,
 			Name:    "Postcord",
@@ -67,21 +70,12 @@ func New(config *Config) (*App, error) {
 
 	a.restClient = restClient
 
-	a.cmdRouter = NewCommandRouter(a)
-
 	return a, nil
 }
 
-// AddCommand adds a handler for a slash command
-func (a *App) AddCommand(command *objects.ApplicationCommand) {
-	// TODO check if it exists with Discord, add if it doesn't
-	a.commands = append(a.commands, command)
-}
-
-// Commands returns a list of registered commands.
-// Useful for patching all commands to Discord.
-func (a *App) Commands() []*objects.ApplicationCommand {
-	return a.commands
+// CommandHandler sets the function to handle slash command events
+func (a *App) CommandHandler(handler CommandHandlerFunc) {
+	a.commandHandler = handler
 }
 
 // ComponentHandler sets the function to handle Component events.
@@ -113,43 +107,24 @@ func (a *App) requestHandler(ctx *fasthttp.RequestCtx, _ fasthttprouter.Params) 
 // ProcessRequest is used internally to process a validated request.
 // It is exposed to allow users to tied Postcord in with any web framework
 // of their choosing.  Ensure you only pass validated requests.
-func (a *App) ProcessRequest(data []byte) (ctx *Ctx, err error) {
-	ctx = &Ctx{
-		app: a,
-	}
-	err = json.Unmarshal(data, ctx)
+func (a *App) ProcessRequest(data []byte) (resp *objects.InteractionResponse, err error) {
+	var req objects.Interaction
+	err = json.Unmarshal(data, &req)
 	if err != nil {
 		a.logger.WithError(err).Error("failed to decode request body")
 		return
 	}
 
-	a.logger.Info("received event of type ", ctx.Request.Type)
+	a.logger.Info("received event of type ", req.Type)
 
-	switch ctx.Request.Type {
+	switch req.Type {
 	case objects.InteractionRequestPing:
-		ctx = &Ctx{Response: &objects.InteractionResponse{Type: objects.ResponsePong}}
+		resp = &objects.InteractionResponse{Type: objects.ResponsePong}
 		return
 	case objects.InteractionApplicationCommand:
-		if err := a.cmdRouter.Execute(ctx); err != nil {
-			ctx.SetContent("Something went wrong").Ephemeral()
-		}
+		resp = a.commandHandler(&req)
 	case objects.InteractionButton:
-		if a.componentHandler == nil {
-			a.logger.Error("got button event, but button handler not set")
-			return
-		}
-
-		btnCtx := &ComponentCtx{
-			Ctx: ctx,
-		}
-
-		err = json.Unmarshal(ctx.Request.Data, &btnCtx.Data)
-		if err != nil {
-			a.logger.WithError(err).Error("failed to decode button data")
-			return
-		}
-
-		a.componentHandler(btnCtx)
+		resp = a.componentHandler(&req)
 	}
 
 	return
@@ -179,9 +154,4 @@ func (a *App) Run(port int) error {
 // Rest exposes the internal Rest client so you can make calls to the Discord API
 func (a *App) Rest() *rest.Client {
 	return a.restClient
-}
-
-// CmdRouter returns the command router so commands can be added
-func (a *App) CmdRouter() *CommandRouter {
-	return a.cmdRouter
 }
