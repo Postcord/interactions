@@ -14,8 +14,7 @@ import (
 )
 
 type (
-	CommandHandlerFunc   func(*objects.Interaction) *objects.InteractionResponse
-	ComponentHandlerFunc func(*objects.Interaction) *objects.InteractionResponse
+	HandlerFunc func(*objects.Interaction) *objects.InteractionResponse
 )
 
 // App is the primary interactions server
@@ -26,8 +25,8 @@ type App struct {
 	propsLock        sync.RWMutex
 	logger           *logrus.Logger
 	restClient       *rest.Client
-	commandHandler   CommandHandlerFunc
-	componentHandler ComponentHandlerFunc
+	commandHandler   HandlerFunc
+	componentHandler HandlerFunc
 }
 
 // Create a new interactions server instance
@@ -74,12 +73,12 @@ func New(config *Config) (*App, error) {
 }
 
 // CommandHandler sets the function to handle slash command events
-func (a *App) CommandHandler(handler CommandHandlerFunc) {
+func (a *App) CommandHandler(handler HandlerFunc) {
 	a.commandHandler = handler
 }
 
 // ComponentHandler sets the function to handle Component events.
-func (a *App) ComponentHandler(handler ComponentHandlerFunc) {
+func (a *App) ComponentHandler(handler HandlerFunc) {
 	a.componentHandler = handler
 }
 
