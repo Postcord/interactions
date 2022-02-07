@@ -124,7 +124,7 @@ func (a *App) HTTPHandler() http.HandlerFunc {
 			return
 		}
 
-		resp, err := a.ProcessRequest(r.Context(), bodyBytes)
+		resp, err := a.ProcessRequest(a.logger.WithContext(r.Context()), bodyBytes)
 		if err != nil {
 			_ = jr.Encode(objects.InteractionResponse{
 				Type: objects.ResponseChannelMessageWithSource,
@@ -155,7 +155,12 @@ func (a *App) ProcessRequest(ctx context.Context, data []byte) (resp *objects.In
 		return
 	}
 
-	a.logger.Info().Int("type", int(req.Type)).Msg("received request")
+	l := zerolog.Ctx(ctx)
+	l.UpdateContext(func(c zerolog.Context) zerolog.Context {
+		return c.Int("interaction_type", int(req.Type)).Int("interaction_id", int(req.ID))
+	})
+
+	l.Debug().Msg("received request")
 
 	// Discord requires all interactions respond within 5 seconds
 	// so we may as well enforce this here
@@ -170,7 +175,7 @@ func (a *App) ProcessRequest(ctx context.Context, data []byte) (resp *objects.In
 		if a.commandHandler != nil {
 			resp = a.commandHandler(ctx, &req)
 		} else {
-			log.Warn().Msg("no command handler set")
+			l.Warn().Msg("no command handler set")
 		}
 	case objects.InteractionComponent:
 		if a.componentHandler != nil {
@@ -181,29 +186,29 @@ func (a *App) ProcessRequest(ctx context.Context, data []byte) (resp *objects.In
 				}, nil
 			}
 		} else {
-			log.Warn().Msg("no component handler set")
+			l.Warn().Msg("no component handler set")
 		}
 	case objects.InteractionAutoComplete:
 		if a.autocompleteHandler != nil {
 			resp = a.autocompleteHandler(ctx, &req)
 		} else {
-			log.Warn().Msg("no autocomplete handler set")
+			l.Warn().Msg("no autocomplete handler set")
 		}
 	case objects.InteractionModalSubmit:
 		if a.modalHandler != nil {
 			resp = a.modalHandler(ctx, &req)
 		} else {
-			log.Warn().Msg("no modal handler set")
+			l.Warn().Msg("no modal handler set")
 		}
 	default:
-		log.Warn().Int("type", int(req.Type)).Msg("unknown interaction type")
+		l.Warn().Msg("unknown interaction type")
 		err = fmt.Errorf("unknown interaction type: %d", req.Type)
 	}
 
 	if resp == nil {
 		err = fmt.Errorf("nil response")
 	} else {
-		log.Debug().Int("type", int(resp.Type)).Msg("sending response")
+		l.Debug().Msg("sending response")
 	}
 
 	return
