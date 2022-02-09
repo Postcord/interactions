@@ -195,7 +195,7 @@ func (a *App) HTTPHandler() http.HandlerFunc {
 // It is exposed to allow users to tied Postcord in with any web framework
 // of their choosing.  Ensure you only pass validated requests.
 func (a *App) ProcessRequest(ctx context.Context, data []byte) (resp *objects.InteractionResponse, err error) {
-	_, span := otel.Tracer(tracerName).Start(ctx, "interactions.ProcessRequest")
+	ctx, span := otel.Tracer(tracerName).Start(ctx, "interactions.ProcessRequest")
 	defer span.End()
 
 	var req objects.Interaction
