@@ -19,7 +19,12 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/valyala/fasthttp"
 	"github.com/valyala/fasthttp/fasthttpadaptor"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
+
+const tracerName = "postcord"
 
 type (
 	HandlerFunc func(context.Context, *objects.Interaction) *objects.InteractionResponse
@@ -121,6 +126,9 @@ func FailUnknownError(w http.ResponseWriter, jr *json.Encoder) {
 // HTTPHandler exposes a net/http handler to process incoming interactions
 func (a *App) HTTPHandler() http.HandlerFunc {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		newCtx, span := otel.Tracer(tracerName).Start(r.Context(), "interactions.HTTPHandler")
+		defer span.End()
+
 		jr := json.NewEncoder(w)
 		signature := r.Header.Get("X-Signature-Ed25519")
 		bodyBytes, err := ioutil.ReadAll(r.Body)
@@ -135,8 +143,10 @@ func (a *App) HTTPHandler() http.HandlerFunc {
 			return
 		}
 
-		resp, err := a.ProcessRequest(a.logger.WithContext(r.Context()), bodyBytes)
+		resp, err := a.ProcessRequest(a.logger.WithContext(newCtx), bodyBytes)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			FailUnknownError(w, jr)
 			return
 		}
@@ -185,6 +195,9 @@ func (a *App) HTTPHandler() http.HandlerFunc {
 // It is exposed to allow users to tied Postcord in with any web framework
 // of their choosing.  Ensure you only pass validated requests.
 func (a *App) ProcessRequest(ctx context.Context, data []byte) (resp *objects.InteractionResponse, err error) {
+	_, span := otel.Tracer(tracerName).Start(ctx, "interactions.ProcessRequest")
+	defer span.End()
+
 	var req objects.Interaction
 	err = json.Unmarshal(data, &req)
 	if err != nil {
@@ -192,6 +205,8 @@ func (a *App) ProcessRequest(ctx context.Context, data []byte) (resp *objects.In
 		err = fmt.Errorf("failed to decode request body")
 		return
 	}
+
+	span.SetAttributes(attribute.Int("interaction_type", int(req.Type)), attribute.String("interaction_id", req.ID.String()))
 
 	l := zerolog.Ctx(ctx)
 	newLogger := l.With().Int("interaction_type", int(req.Type)).Int("interaction_id", int(req.ID)).Logger()
