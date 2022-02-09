@@ -30,6 +30,27 @@ type (
 	HandlerFunc func(context.Context, *objects.Interaction) *objects.InteractionResponse
 )
 
+func makeDefaultHandler(component string) HandlerFunc {
+	return func(ctx context.Context, interaction *objects.Interaction) *objects.InteractionResponse {
+		_, span := otel.Tracer(tracerName).Start(ctx, "interactions.defaultHandler")
+		defer span.End()
+		span.SetAttributes(attribute.String("component", component))
+		err := fmt.Errorf("no handler for %s", component)
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+
+		zerolog.Ctx(ctx).Error().Err(err).Msg("")
+
+		return &objects.InteractionResponse{
+			Type: objects.ResponseChannelMessageWithSource,
+			Data: &objects.InteractionApplicationCommandCallbackData{
+				Content: fmt.Sprintf("Please let the developer of this bot know they have not yet set a handler for the %s interaction type.", component),
+				Flags:   objects.MsgFlagEphemeral,
+			},
+		}
+	}
+}
+
 // App is the primary interactions server
 type App struct {
 	extraProps          map[string]interface{}
@@ -75,6 +96,11 @@ func New(config *Config) (*App, error) {
 	}
 
 	a.restClient = restClient
+
+	a.commandHandler = makeDefaultHandler("command")
+	a.componentHandler = makeDefaultHandler("component")
+	a.autocompleteHandler = makeDefaultHandler("autocomplete")
+	a.modalHandler = makeDefaultHandler("modal")
 
 	return a, nil
 }
@@ -224,37 +250,21 @@ func (a *App) ProcessRequest(ctx context.Context, data []byte) (resp *objects.In
 		resp = &objects.InteractionResponse{Type: objects.ResponsePong}
 		return
 	case objects.InteractionApplicationCommand:
-		if a.commandHandler != nil {
-			resp = a.commandHandler(ctx, &req)
-		} else {
-			l.Warn().Msg("no command handler set")
-		}
+		resp = a.commandHandler(ctx, &req)
 	case objects.InteractionComponent:
-		if a.componentHandler != nil {
-			resp = a.componentHandler(ctx, &req)
-			if resp == nil {
-				return &objects.InteractionResponse{
-					Type: objects.ResponseDeferredMessageUpdate,
-				}, nil
-			}
-		} else {
-			l.Warn().Msg("no component handler set")
+		resp = a.componentHandler(ctx, &req)
+		if resp == nil {
+			return &objects.InteractionResponse{
+				Type: objects.ResponseDeferredMessageUpdate,
+			}, nil
 		}
 	case objects.InteractionAutoComplete:
-		if a.autocompleteHandler != nil {
-			resp = a.autocompleteHandler(ctx, &req)
-		} else {
-			l.Warn().Msg("no autocomplete handler set")
-		}
+		resp = a.autocompleteHandler(ctx, &req)
 	case objects.InteractionModalSubmit:
-		if a.modalHandler != nil {
-			resp = a.modalHandler(ctx, &req)
-		} else {
-			l.Warn().Msg("no modal handler set")
-		}
+		resp = a.modalHandler(ctx, &req)
 	default:
-		l.Warn().Msg("unknown interaction type")
 		err = fmt.Errorf("unknown interaction type: %d", req.Type)
+		return
 	}
 
 	if resp == nil {
